@@ -1,0 +1,36 @@
+afv 0.1.1    ???
+
+-
+
+afv 0.1.0    01/24/10
+
+- Moved functon calls and assignments to statement position only.
+- Added checks for static top-level declarations, which are not supported.
+- Checks start from 'main' function.  Automatically detects infinite loop.
+- Disallows state modifying expressions.
+
+afv 0.0.4    01/21/10
+
+- Moved branches into model.
+- Improved counter example generation.
+
+afv 0.0.3    01/19/10
+
+- Bug fix to --yices command option.
+- Added basic counter example generation.
+
+afv 0.0.2    01/17/10
+
+- Support for function arguments.  Still no support for return values.
+- Stronger type checking.
+
+afv 0.0.1    01/14/10
+
+- Checks for duplicate top-level names.
+- Uses yices new 'quickCheckY'.
+- Fixed bug affecting 'assume'.
+
+afv 0.0.0    01/12/10
+
+- Initial release.
+
