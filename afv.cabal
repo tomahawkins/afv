@@ -52,3 +52,4 @@ executable afv
 source-repository head
   type:     git
   location: git://github.com/tomahawkins/afv.git
+
