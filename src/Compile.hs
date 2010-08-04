@@ -392,9 +392,16 @@ functionInfo f = notSupported f "function"
 
 -- | Topologically sorts functions based on dependencies.
 sortFunctions :: [CFunDef] -> [CFunDef]
-sortFunctions fs = case topo $ map functionDeps fs of
-  Left a -> notSupported none $ "recursive functions somewhere among: " ++ show a
-  Right a -> [ f | a <- a, f <- fs, functionName f == a ]
+sortFunctions fs = if not $ null notFound
+  then unexpected none $ "functions not found: " ++ show notFound
+  else case topo $ map functionDeps fs of
+    Left a -> notSupported none $ "recursive functions somewhere among: " ++ show a
+    Right a -> [ f | a <- a, f <- fs, functionName f == a ]
+  where
+  deps = map functionDeps fs
+  provided = fst $ unzip deps
+  needed   = nub $ concat $ snd $ unzip deps
+  notFound = needed \\ provided
 
 topo :: Eq a => [(a, [a])] -> Either [a] [a]
 topo a = topo' [] a
