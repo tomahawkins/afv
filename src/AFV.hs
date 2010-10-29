@@ -1,14 +1,13 @@
 module Main (main) where
 
-import Data.List
+import qualified Data.ByteString as B
+import Language.C
 import System.Environment
-import System.IO
 
 import Compile
-import Parse
 import Verify
 
-version = "0.1.1"
+version = "0.2.0"
 
 main :: IO ()
 main = do
@@ -19,42 +18,14 @@ main = do
           | elem a ["version", "-v", "--version"] -> putStrLn $ "afv " ++ version
     ["example"] -> example
     ["header"]  -> header
-    ("verify":args) -> do
-      let a = parseArgs Args { yices = "yices", gcc = "gcc", k = 20, defines = [("AFV", "")], includes = ["."], inputs = [] } args
-      units <- sequence [ putStrLn ("parsing " ++ f ++ " ...") >> hFlush stdout >> parse (gcc a) (includes a) (defines a) f | f <- inputs a ]
-      model <- compile units
-      verify (yices a) (k a) model
+    ["verify", file] -> do
+      a <- B.readFile file
+      model <- compile $ case parseC a (initPos file) of
+        Left e  -> error $ "parsing error: " ++ show e
+        Right a -> [a]
+      verify "yices" 20 model
     _ -> help
 
-
-data Args = Args
-  { yices    :: FilePath
-  , k        :: Int
-  , gcc      :: FilePath
-  , defines  :: [(String, String)]
-  , includes :: [FilePath]
-  , inputs   :: [FilePath]
-  } deriving Show
-
-parseArgs :: Args -> [String] -> Args
-parseArgs a b = case b of
-  [] -> a
-  arg : args | isYices   -> parseArgs a { yices = pathYices } args
-             | isGCC     -> parseArgs a { gcc = pathGCC   } args
-             | isInclude -> parseArgs a { includes = includes a ++ [drop 2 arg]    } args
-             | isDefine  -> parseArgs a { defines  = defines a  ++ [(name, value)] } args
-    where
-    isYices = isPrefixOf "--yices=" arg
-    pathYices = drop 8 arg
-    isGCC   = isPrefixOf "--gcc="   arg
-    pathGCC = drop 6 arg
-    isInclude = length arg > 2 && take 2 arg == "-I"
-    isDefine  = length arg > 2 && take 2 arg == "-D"
-    (name, value') = span (/= '=') $ drop 2 arg
-    value = if length value' <= 1 then "1" else tail value'
-  "-k" : k : args -> parseArgs a { k = read k } args
-  files -> a { inputs = files }
- 
 
 header :: IO ()
 header = do
@@ -132,7 +103,7 @@ help = putStrLn $ unlines
   , "  " ++ version
   , ""
   , "SYNOPSIS"
-  , "  afv verify [-k max-k] [--yices=path-to-yices] [--gcc=path-to-gcc] {-Idir} {-Dmacro[=def]} c-file {c-file}"
+  , "  afv verify <file>"
   , "  afv header"
   , "  afv example"
   , ""
@@ -141,15 +112,8 @@ help = putStrLn $ unlines
   , "  Requires GCC for C preprocessing and the Yices SMT solver."
   , ""
   , "COMMANDS"
-  , "  verify [options] c-files ..."
+  , "  verify <file>"
   , "    Runs verification."
-  , ""
-  , "    -k n          : Max k-induction depth."
-  , "    --yices=path  : Path to Yices solver."
-  , "    --gcc=path    : Path to GCC."
-  , "    -Idir         : Add directory to includes search path."
-  , "    -Dmacro       : Define a macro."
-  , "    -Dmacro=def   : Define a macro with a value."
   , ""
   , "  header"
   , "    Writes AFV's header file (afv.h), which provides the 'assert' and 'assume' functions."
