@@ -1,7 +1,6 @@
 module Utils
   ( TypeInfo (..)
   , typeInfo
-  , isVisable
   ) where
 
 import Language.C
@@ -15,9 +14,6 @@ data TypeInfo = TypeInfo
   , isStatic
   , isExtern    :: Bool
   }
-
-isVisable :: TypeInfo -> Bool
-isVisable t = not (isStatic t) && not (isExtern t)
 
 typeInfo :: [CDeclSpec] -> (TypeInfo, Type)
 typeInfo specs = (info, typ)

@@ -1,6 +1,6 @@
 module Main (main) where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B
 import Language.C
 import System.Environment
 
@@ -19,13 +19,15 @@ main = do
     ["example"] -> example
     ["header"]  -> header
     ["verify", file] -> do
-      a <- B.readFile file
-      model <- compile $ case parseC a (initPos file) of
-        Left e  -> error $ "parsing error: " ++ show e
-        Right a -> [a]
+      a <- if file == "-" then getContents else readFile file
+      model <- compile $ parse (if file == "-" then "stdin" else file) a
       verify "yices" 20 model
     _ -> help
 
+parse :: String -> String -> CTranslUnit
+parse name code = case parseC (B.pack code) (initPos name) of
+    Left e  -> error $ "parsing error: " ++ show e
+    Right a -> a
 
 header :: IO ()
 header = do
@@ -97,13 +99,13 @@ help :: IO ()
 help = putStrLn $ unlines
   [ ""
   , "NAME"
-  , "  afv - Atom's Formal Verifier"
+  , "  afv - Atom Formal Verifier"
   , ""
   , "VERSION"
   , "  " ++ version
   , ""
   , "SYNOPSIS"
-  , "  afv verify <file>"
+  , "  afv verify ( <file> | - )"
   , "  afv header"
   , "  afv example"
   , ""
@@ -112,8 +114,8 @@ help = putStrLn $ unlines
   , "  Requires GCC for C preprocessing and the Yices SMT solver."
   , ""
   , "COMMANDS"
-  , "  verify <file>"
-  , "    Runs verification."
+  , "  verify ( <file> | - )"
+  , "    Runs verification on a C preprocessed file (CPP) or from stdin."
   , ""
   , "  header"
   , "    Writes AFV's header file (afv.h), which provides the 'assert' and 'assume' functions."

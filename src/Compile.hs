@@ -11,40 +11,23 @@ import qualified Model as M
 import Utils
 
 -- | Compiles a program to a model for analysis.
-compile :: [CTranslUnit] -> IO Model
-compile units = do
-  m <- execStateT (evalStat initEnv $ rewrite units) initMDB
+compile :: CTranslUnit -> IO Model
+compile unit = do
+  m <- execStateT (evalStat initEnv $ rewrite unit) initMDB
   return (model m) { initActions = reverse $ initActions (model m), loopActions = reverse $ loopActions (model m) }
 
 none :: NodeInfo
 none = internalNode
 
 -- | Rewrites a program to a single statement.  Requires no recursive functions and unique declarations for all top level declarations.
-rewrite :: [CTranslUnit] -> CStat
-rewrite units = if not $ null asms
-  then notSupported (head asms) "inline assembly"
-  else if not $ null duplicateNames
-    then error $ "duplicate top-level names found: " ++ intercalate ", " duplicateNames
-    else if not $ null staticFuncDefs
-      then notSupported (head staticFuncDefs) "top-level static declarations"
-      else if not $ null staticVarDefs
-        then notSupported (head staticVarDefs) "top-level static declarations"
-        else CCompound [] (varDefs ++ funcDefs ++ [CBlockStmt call]) none
+rewrite :: CTranslUnit -> CStat
+rewrite (CTranslUnit items _) = CCompound [] (map f items ++ [CBlockStmt callMain]) none
   where
-  items = [ a | CTranslUnit items _ <- units, a <- items ]
-  varDefs  = [ CBlockDecl a | CDeclExt a@(CDecl specs _ _) <- items, not $ isExtern $ fst $ typeInfo specs ]
-  funcDefs = map CNestedFunDef $ sortFunctions [ a | CFDefExt a@(CFunDef specs _ _ _ _) <- items, not $ isExtern $ fst $ typeInfo specs ]
-  asms  = [ a | CAsmExt  a <- items ]
-  call :: CStat
-  call = CExpr (Just $ CCall (CVar (Ident "main" 0 none) none) [] none) none
-  duplicateNames = duplicates $ [ name | CNestedFunDef f <- funcDefs, let (_, (Ident name _ _), _, _) = functionInfo f ] ++ concat [ [ name | (Just (CDeclr (Just (Ident name _ _)) _ _ _ _), _, _) <- a ] | CBlockDecl (CDecl _ a _) <- varDefs ]
-  staticFuncDefs = [ a | CFDefExt a@(CFunDef specs _ _ _ _) <- items, isStatic $ fst $ typeInfo specs ]
-  staticVarDefs  = [ a | CDeclExt a@(CDecl specs _ _) <- items, isStatic $ fst $ typeInfo specs ]
-
-duplicates :: Eq a => [a] -> [a]
-duplicates [] = []
-duplicates (a:b) | elem a b  = a : duplicates b
-                 | otherwise =     duplicates b
+  f (CDeclExt a) = CBlockDecl a
+  f (CFDefExt a) = CNestedFunDef a
+  f a@(CAsmExt _) = notSupported a "inline assembly"
+  callMain :: CStat
+  callMain = CExpr (Just $ CCall (CVar (Ident "main" 0 none) none) [] none) none
 
 type M = StateT MDB IO
 
@@ -380,105 +363,8 @@ latchBool n a = do
   declare n v a
   return v
 
-
-
 -- | Extract relavent info from a function declaration.
 functionInfo :: CFunDef -> ([CDeclSpec], Ident, [CDecl], CStat)
 functionInfo (CFunDef specs (CDeclr (Just ident) [(CFunDeclr (Right (args, False)) _ _)] Nothing [] _) [] stmt _) = (specs, ident, args, stmt)  --XXX What is the False?
 functionInfo f = notSupported f "function"
-
-
-
-
--- | Topologically sorts functions based on dependencies.
-sortFunctions :: [CFunDef] -> [CFunDef]
-sortFunctions fs = if not $ null notFound
-  then unexpected none $ "functions not found: " ++ show notFound
-  else case topo $ map functionDeps fs of
-    Left a -> notSupported none $ "recursive functions somewhere among: " ++ show a
-    Right a -> [ f | a <- a, f <- fs, functionName f == a ]
-  where
-  deps = map functionDeps fs
-  provided = fst $ unzip deps
-  needed   = nub $ concat $ snd $ unzip deps
-  notFound = needed \\ provided
-
-topo :: Eq a => [(a, [a])] -> Either [a] [a]
-topo a = topo' [] a
-  where
-  topo' a [] = Right a
-  topo' done waiting = if null next then Left $ fst $ unzip waiting else topo' (done ++ next) stillWaiting
-    where
-    next = [ a | (a, deps) <- waiting, all (flip elem done) deps ]
-    stillWaiting = [ (a, deps) | (a, deps) <- waiting, notElem a next ]
-
-
-functionName :: CFunDef -> String
-functionName f = name where (_, Ident name _ _, _, _) = functionInfo f
-
-afvFunctionNames :: [String]
-afvFunctionNames = ["assert", "assume"]
-
--- | Analyzes a function for dependencies.
-functionDeps :: CFunDef -> (String, [String])
-functionDeps f = (functionName f, filter (flip notElem afvFunctionNames) $ nub $ fb [] [CNestedFunDef f])
-  where
-  rewrite :: CFunDef -> CStat
-  rewrite f = CCompound [] (map CBlockDecl args ++ [CBlockStmt stat]) none where (_, _, args, stat) = functionInfo f
-  fs :: [String] -> CStat -> [String]
-  fs env a = case a of
-    CLabel _ a _ _ -> fs env a
-    CCase a b _ -> fe env a ++ fs env b
-    CCases a b c _ -> fe env a ++ fe env b ++ fs env c
-    CDefault a _ -> fs env a
-    CExpr (Just a ) _ -> fe env a
-    CExpr Nothing _ -> []
-    CCompound _ a _ -> fb env a
-    CIf a b Nothing _ -> fe env a ++ fs env b
-    CIf a b (Just c) _ -> fe env a ++ fs env b ++ fs env c
-    CSwitch a b _ -> fe env a ++ fs env b
-    CWhile a b _ _ -> fe env a ++ fs env b
-    CFor (Left Nothing) Nothing Nothing a _ -> fs env a
-    CFor _ _ _ _ _ -> notSupported a "for loops"
-    CGoto _ _ -> []
-    CGotoPtr a _ -> fe env a
-    CCont _ -> []
-    CBreak _ -> []
-    CReturn Nothing _ -> []
-    CReturn (Just a) _ -> fe env a
-    CAsm _ _ -> []
-  fe :: [String] -> CExpr -> [String]
-  fe env a = case a of
-    CComma a _ -> fe' a
-    CAssign _ a b _ -> fe' [a, b]
-    CCond a (Just b) c _ ->  fe' [a, b, c]
-    CCond a Nothing b _ ->  fe' [a, b]
-    CBinary _ a b _ -> fe' [a, b]
-    CCast _ a _ -> fe env a --XXX does not check cast declaration.
-    CUnary _ a _ -> fe env a
-    --CSizeofExpr CExpr NodeInfo
-    --CSizeofType CDecl NodeInfo
-    --CAlignofExpr CExpr NodeInfo
-    --CAlignofType CDecl NodeInfo
-    --CComplexReal CExpr NodeInfo
-    --CComplexImag CExpr NodeInfo
-    CIndex a b _ -> fe' [a, b]
-    CCall (CVar (Ident n _ _) _) args _ -> (if elem n env then [] else [n]) ++ fe' args
-    CCall _ _ _ -> notSupported a "non-named function references"
-    CMember a _ _ _ -> fe env a
-    CVar _ _ -> []
-    CConst _ -> []
-    --CCompoundLit CDecl CInitList NodeInfo
-    CStatExpr a _ -> fs env a
-    CLabAddrExpr _ _ -> []
-    --CBuiltinExpr CBuiltin
-    _ -> notSupported a "expression"
-    where
-    fe' = concatMap $ fe env
-  fb :: [String] -> [CBlockItem] -> [String]
-  fb _ [] = []
-  fb env (a:b) = case a of
-    CBlockStmt a -> fs env a ++ fb env b
-    CBlockDecl _ -> fb env b
-    CNestedFunDef f -> fs env' (rewrite f) ++ fb env' b where env' = functionName f : env
 
