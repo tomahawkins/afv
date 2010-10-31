@@ -216,8 +216,8 @@ expr t a = case a of
     c <- expr t' c
     return $ IF a b c
 
-  Ref _ _ -> notSupported a "address-of operator"
-  Deref _ _ -> notSupported a "indirection operator"
+  Ref   _ _ -> notSupported' a "address-of operator"
+  Deref _ _ -> notSupported' a "indirection operator"
 
 exprConst :: Type -> Const -> ExpY
 exprConst t a = case t of

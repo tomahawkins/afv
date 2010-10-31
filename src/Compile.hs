@@ -65,23 +65,18 @@ getStage = do
   return $ stage m
 
 -- | Environment for resolving identifiers.
-type Env = [Value]
+data Env = Env
+  { function :: Ident -> Function
+  , variable :: Ident -> V
+  }
 
-data Value = EnvFunction String Function | EnvVariable String V
+data Function
+  = Function Env CFunDef
+  | Primitive Primitive
 
-data Function = Function Int ([E] -> M ())
-
--- | Looks of a variable in the environment.
-variable :: Env -> Ident -> V
-variable env i@(Ident name _ _) = if null m then err i $ "variable \"" ++ name ++ "\" not found" else head m
-  where
-  m = [ a | EnvVariable n a <- env, n == name ]
-
--- | Looks of a function in the environment.
-function :: Env -> Ident -> Function
-function env i@(Ident name _ _) = if null m then err i $ "function \"" ++ name ++ "\" not found" else head m
-  where
-  m = [ a | EnvFunction n a <- env, n == name ]
+data Primitive
+  = Assert
+  | Assume
 
 -- | Creates a branch.
 branch :: Position -> V -> M () -> M () -> M ()
@@ -90,13 +85,13 @@ branch p a onTrue onFalse = do   --XXX What happens if infinite loop is called w
   case stage m1 of
     Init -> put m1 { model = (model m1) { initActions = [] } }
     Loop -> put m1 { model = (model m1) { loopActions = [] } }
-    Done -> unexpected p "statements after infinite loop"
+    Done -> unexpected' p "statements after infinite loop"
   onTrue
   m2 <- get
   case stage m2 of
     Init | stage m1 == Init -> put m1 { model = (model m2) { initActions = [] } }
     Loop | stage m1 == Loop -> put m1 { model = (model m2) { loopActions = [] } }
-    _ -> unexpected p "infinite loop in branch"
+    _ -> unexpected' p "infinite loop in branch"
   onFalse
   m3 <- get
   case stage m3 of
@@ -106,7 +101,7 @@ branch p a onTrue onFalse = do   --XXX What happens if infinite loop is called w
     Loop | stage m1 == Loop && stage m2 == Loop -> do
       put m3 { model = (model m3) { loopActions = loopActions $ model m1 } }
       newAction $ Branch a (reverse $ loopActions $ model m2) (reverse $ loopActions $ model m3) p
-    _ -> unexpected p "infinite loop in branch"
+    _ -> unexpected' p "infinite loop in branch"
 
 -- | Push an identifier onto the call stack, do something, then pop it off.
 callStack :: Ident -> M a -> M a
@@ -126,7 +121,16 @@ callPath = do
 
 -- | The initial environment defines the assert and assume functions.
 initEnv :: Env
-initEnv = [EnvFunction "assert" $ Function 1 assert, EnvFunction "assume" $ Function 1 assume]
+initEnv = Env
+  { function = \ a@(Ident name _ _) -> case name of
+      "assert" -> Assert
+      "assume" -> Assume
+      _        -> unexpected "function not found" a
+  , variable = \ a -> unexpected "variable not found" a
+  }
+
+{-
+  [EnvFunction "assert" $ Function 1 assert, EnvFunction "assume" $ Function 1 assume]
   where
   assert a' = do
     let a = head a'
@@ -138,6 +142,7 @@ initEnv = [EnvFunction "assert" $ Function 1 assert, EnvFunction "assume" $ Func
     s <- callPath
     x <- latchBool (posOf a) a
     newAction $ Assume x s (posOf a)
+-}
 
 -- | Adds new action.
 newAction :: Action -> M ()
@@ -199,7 +204,7 @@ evalStat env a = do
       f op = evalStat env (CExpr (Just (CAssign CAssignOp a (CBinary op a b n) n)) n)
 
     CExpr (Just (CCall (CVar f _) args _)) _ -> do
-      when (arity /= length args) $ unexpected f $ "function called with " ++ show (length args) ++ " arguments, but defined with " ++ show arity ++ " arguments"
+      when (arity /= length args) $ unexpected' f $ "function called with " ++ show (length args) ++ " arguments, but defined with " ++ show arity ++ " arguments"
       callStack f $ func $ map (evalExpr env) args
       where
       Function arity func = function env f
@@ -230,17 +235,17 @@ evalExpr env a = case a of
     CRmdOp -> Mod a b p
     CAddOp -> Add a b p
     CSubOp -> Sub a b p
-    CShlOp -> notSupported a "(<<)"
-    CShrOp -> notSupported a "(>>)"
+    CShlOp -> notSupported' a "(<<)"
+    CShrOp -> notSupported' a "(>>)"
     CLeOp  -> Lt a b p
     CGrOp  -> Lt b a p
     CLeqOp -> Not (Lt b a p) p
     CGeqOp -> Not (Lt a b p) p
     CEqOp  -> Eq a b p
     CNeqOp -> Not (Eq a b p) p
-    CAndOp -> notSupported a "(&)"
-    CXorOp -> notSupported a "(^)"
-    COrOp  -> notSupported a "(|)"
+    CAndOp -> notSupported' a "(&)"
+    CXorOp -> notSupported' a "(^)"
+    COrOp  -> notSupported' a "(|)"
     CLndOp -> And a b p
     CLorOp -> Or a b p
     where
@@ -254,7 +259,7 @@ evalExpr env a = case a of
     CNegOp  -> Not a p
     --(CAdrOp,  a) -> return $ Ref a p
     --(CIndOp,  a) -> return $ Deref a p
-    _ -> notSupported n "unary operator"
+    _ -> notSupported' n "unary operator"
     where
     a = evalExpr env a'
     p = posOf n
@@ -308,8 +313,8 @@ evalDecl env d@(CDecl specs decls _) = if isExtern typInfo then return env else 
         addVar env v
         where
         p = posOf e
-      _ -> notSupported i "variable declaration"
-    _ -> notSupported d "arrays, pointers, or functional pointers (So what good is this tool anyway?)"
+      _ -> notSupported' i "variable declaration"
+    _ -> notSupported' d "arrays, pointers, or functional pointers (So what good is this tool anyway?)"
       
 
 evalFunc :: Env -> CFunDef -> M Env
@@ -338,7 +343,7 @@ funcArgs (CDecl specs decls n) = map f decls
   where
   t = typeInfo specs
   f (Just (CDeclr (Just i) [] Nothing [] _), Nothing, Nothing) = (i, t)
-  f _ = notSupported n "function argument"
+  f _ = notSupported' n "function argument"
 
 
 

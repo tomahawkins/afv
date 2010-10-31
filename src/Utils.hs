@@ -24,11 +24,11 @@ typeInfo specs = (info, typ)
     CStorageSpec a -> case a of
       CStatic _ -> t { isStatic = True }
       CExtern _ -> t { isExtern = True }
-      _         -> notSupported a "storage class"
+      _         -> notSupported a $ "storage class"
     CTypeQual a -> case a of
       CConstQual _ -> t { isConst    = True }
       CVolatQual _ -> t { isVolatile = True }
-      _         -> notSupported a "type qualifier"
+      _         -> notSupported a $ "type qualifier"
     CTypeSpec _ -> t
   voids    = [ a | CTypeSpec a@(CVoidType _) <- specs ]
   signed   = [ a | CTypeSpec a@(CSignedType _) <- specs ]

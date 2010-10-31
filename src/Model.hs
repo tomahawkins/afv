@@ -168,11 +168,11 @@ instance TypeOf E where
     Ref a _ -> Ptr $ typeOf a
     Deref a p -> case typeOf a of
       Ptr a -> a
-      t -> err p $ "type violation: expecting pointer type, but got " ++ show t
+      t -> err' p $ "type violation: expecting pointer type, but got " ++ show t
     where
     unify' = unify a
 
-unify :: Pos a => a -> Type -> Type -> Type
+unify :: (Pos a) => a -> Type -> Type -> Type
 unify n a b = case (a, b) of
   (a, b) | a == b -> a
 
@@ -188,7 +188,7 @@ unify n a b = case (a, b) of
   (Rational Nothing, a@(Rational _)) -> a
   (a@(Rational _), Rational Nothing) -> a
 
-  (a, b) -> err n $ "type violation: " ++ show a ++ " incompatiable with " ++ show b
+  (a, b) -> err' n $ "type violation: " ++ show a ++ " incompatiable with " ++ show b
 
 typeCheckModel :: Model -> Model
 typeCheckModel m = m { initActions = map typeCheckAction $ initActions m, loopActions = map typeCheckAction $ loopActions m }
