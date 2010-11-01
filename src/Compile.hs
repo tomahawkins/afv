@@ -19,7 +19,7 @@ compile unit = do
 none :: NodeInfo
 none = internalNode
 
--- | Rewrites a program to a single statement.  Requires no recursive functions and unique declarations for all top level declarations.
+-- | Rewrites a program to a single statement.
 rewrite :: CTranslUnit -> CStat
 rewrite (CTranslUnit items _) = CCompound [] (map f items ++ [CBlockStmt callMain]) none
   where
@@ -65,18 +65,17 @@ getStage = do
   return $ stage m
 
 -- | Environment for resolving identifiers.
-data Env = Env
-  { function :: Ident -> Function
-  , variable :: Ident -> V
-  }
+type Env = Ident -> Thing
 
-data Function
-  = Function Env CFunDef
+data Thing
+  = Type Type
+  | Variable V
+  | Function Env CFunDef
   | Primitive Primitive
 
 data Primitive
-  = Assert
-  | Assume
+  = PrimAssert
+  | PrimAssume
 
 -- | Creates a branch.
 branch :: Position -> V -> M () -> M () -> M ()
@@ -121,28 +120,10 @@ callPath = do
 
 -- | The initial environment defines the assert and assume functions.
 initEnv :: Env
-initEnv = Env
-  { function = \ a@(Ident name _ _) -> case name of
-      "assert" -> Assert
-      "assume" -> Assume
-      _        -> unexpected "function not found" a
-  , variable = \ a -> unexpected "variable not found" a
-  }
-
-{-
-  [EnvFunction "assert" $ Function 1 assert, EnvFunction "assume" $ Function 1 assume]
-  where
-  assert a' = do
-    let a = head a'
-    s <- callPath
-    x <- latchBool (posOf a) a
-    newAction $ Assert x s (posOf a)
-  assume a' = do
-    let a = head a'
-    s <- callPath
-    x <- latchBool (posOf a) a
-    newAction $ Assume x s (posOf a)
--}
+initEnv a@(Ident name _ _) = case name of
+  "assert" -> Primitive PrimAssert
+  "assume" -> Primitive PrimAssume
+  _        -> unexpected' a "name not found"
 
 -- | Adds new action.
 newAction :: Action -> M ()
@@ -153,17 +134,21 @@ newAction a = do
     Loop -> put m { model = (model m) { loopActions = a : loopActions (model m) }}
     Done -> error "Compile.newAction"
 
+-- | Adds a new 'Thing' to an environment.
+addThing :: String -> Thing -> Env -> Env
+addThing name thing env i@(Ident name' _ _)
+  | name == name' = thing
+  | otherwise = env i
+
 -- | Adds new variable.
-addVar :: Env -> V -> M Env
-addVar env a = return $ EnvVariable name a : env
+addVar :: V -> Env -> Env
+addVar v env = addThing name (Variable v) env
   where
-  name = case a of
+  name = case v of
     State (VS a _ _ _)  -> a
     Volatile a _ _   -> a
     Local    a _ _ _ -> a
     _ -> error "Compile.addVar: should not call addVar with Tmp or Branch"
-
-
 
 evalStat :: Env -> CStat -> M ()
 evalStat env a = do
@@ -203,11 +188,11 @@ evalStat env a = do
       f :: CBinaryOp -> M ()
       f op = evalStat env (CExpr (Just (CAssign CAssignOp a (CBinary op a b n) n)) n)
 
-    CExpr (Just (CCall (CVar f _) args _)) _ -> do
-      when (arity /= length args) $ unexpected' f $ "function called with " ++ show (length args) ++ " arguments, but defined with " ++ show arity ++ " arguments"
-      callStack f $ func $ map (evalExpr env) args
+    CExpr (Just (CCall (CVar f _) args _)) _ -> apply env' func' (map (evalExpr env) args) >> return ()
       where
-      Function arity func = function env f
+      (env', func') = case env f of
+        Function env func -> (env, func)
+        _ -> unexpected' f "environment returned something other than a function"
 
     CExpr (Just (CCall _ _ _)) _ -> notSupported a "non named function references"
 
@@ -218,11 +203,18 @@ evalStat env a = do
 
     _ -> notSupported a "statement"
 
+apply :: Env -> CFunDef -> [E] -> M (Maybe E)
+apply env func args = return Nothing --XXX
+  where
+  --callStack ...
+
 evalBlockItem :: Env -> CBlockItem -> M Env
 evalBlockItem env a = case a of
   CBlockStmt a    -> evalStat env a >> return env
   CBlockDecl a    -> evalDecl env a
-  CNestedFunDef a -> evalFunc env a
+  CNestedFunDef a -> return $ addThing name (Function env a) env
+    where
+    (_, (Ident name _ _), _, _) = functionInfo a
 
 -- No stateful operations for expressions.
 evalExpr :: Env -> CExpr -> E
@@ -265,7 +257,10 @@ evalExpr env a = case a of
     p = posOf n
     zero = Const $ M.CInteger 0 p
 
-  CVar i _ -> Var $ variable env i
+  CVar i _ -> case env i of
+    Variable v -> Var v
+    _ -> unexpected' i "environment returned non variable"
+
   CConst a -> case a of
     CIntConst (CInteger a _ _) n -> Const $ M.CInteger a $ posOf n
     CFloatConst (CFloat a) n -> Const $ CRational (toRational (read a :: Double)) $ posOf n
@@ -280,7 +275,7 @@ evalDecl env d@(CDecl specs decls _) = if isExtern typInfo then return env else 
   evalDecl' env (a, b, c) = case a of
     Just (CDeclr (Just i@(Ident name _ n)) [] Nothing [] _) -> case (b, c) of
       (Nothing, Nothing) -> evalDecl' env (a, Just $ CInitExpr (CConst (CIntConst (cInteger 0) n)) n, Nothing)
-      (Just (CInitExpr (CConst const) n'), Nothing) | isStatic typInfo && not (isVolatile typInfo) -> addVar env v
+      (Just (CInitExpr (CConst const) n'), Nothing) | isStatic typInfo && not (isVolatile typInfo) -> return $ addVar v env
         where
         v = State $ VS name typ init $ posOf n
         init = case typ of
@@ -310,33 +305,21 @@ evalDecl env d@(CDecl specs decls _) = if isExtern typInfo then return env else 
             i <- nextId
             return $ Local name typ i p
         declare p v $ evalExpr env e
-        addVar env v
+        return $ addVar v env
         where
         p = posOf e
       _ -> notSupported' i "variable declaration"
     _ -> notSupported' d "arrays, pointers, or functional pointers (So what good is this tool anyway?)"
-      
 
-evalFunc :: Env -> CFunDef -> M Env
-evalFunc env f =  do
-  when (typ /= Void) $ notSupported f "non void function"
-  return $ EnvFunction name (Function (length args) func) : env
-  where
-  (specs, (Ident name _ _), args', stat) = functionInfo f
-  (_, typ) = typeInfo specs
-  args = concatMap funcArgs args'
-  func args' = do
-    env <- foldM bindArg env $ zip args args'
-    evalStat env stat
-
+{-
 bindArg :: Env -> ((Ident, (TypeInfo, Type)), E) -> M Env
 bindArg env ((Ident name _ n, (typInfo, typ)), a) = if isVolatile typInfo
-  then addVar env (Volatile name typ (posOf n))
+  then return $ addVar (Volatile name typ (posOf n)) env
   else do
     i <- nextId
     let v = Local name typ i (posOf n)
     declare (posOf n) v a
-    addVar env v
+    return $ addVar v env
 
 funcArgs :: CDecl -> [(Ident, (TypeInfo, Type))]
 funcArgs (CDecl specs decls n) = map f decls
@@ -345,6 +328,7 @@ funcArgs (CDecl specs decls n) = map f decls
   f (Just (CDeclr (Just i) [] Nothing [] _), Nothing, Nothing) = (i, t)
   f _ = notSupported' n "function argument"
 
+-}
 
 
 

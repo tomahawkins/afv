@@ -12,18 +12,20 @@ data TypeInfo = TypeInfo
   { isConst
   , isVolatile
   , isStatic
+  , isTypedef
   , isExtern    :: Bool
   }
 
 typeInfo :: [CDeclSpec] -> (TypeInfo, Type)
 typeInfo specs = (info, typ)
   where
-  info = foldl f TypeInfo { isConst = False, isVolatile = False, isStatic = False, isExtern = False } specs
+  info = foldl f TypeInfo { isConst = False, isVolatile = False, isStatic = False, isTypedef = False, isExtern = False } specs
   f :: TypeInfo -> CDeclSpec -> TypeInfo
   f t a = case a of
     CStorageSpec a -> case a of
-      CStatic _ -> t { isStatic = True }
-      CExtern _ -> t { isExtern = True }
+      CStatic  _ -> t { isStatic  = True }
+      CExtern  _ -> t { isExtern  = True }
+      CTypedef _ -> t { isTypedef = True }
       _         -> notSupported a $ "storage class"
     CTypeQual a -> case a of
       CConstQual _ -> t { isConst    = True }
