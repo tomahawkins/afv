@@ -309,6 +309,13 @@ evalDecl env d@(CDecl specs decls _) = if isExtern typInfo then return env else 
         where
         p = posOf e
       _ -> notSupported' i "variable declaration"
+    
+    -- Arrays.
+    Just (CDeclr (Just ident) (CArrDeclr _ (CArrSize _ (CConst (CIntConst size _))) _ : _) _ _ _) -> return env --XXX
+
+    -- Ignore function prototypes.
+    Just (CDeclr _ (CFunDeclr _ _ _ :_) _ _ _) -> return env
+
     _ -> notSupported' d "arrays, pointers, or functional pointers (So what good is this tool anyway?)"
 
 {-
