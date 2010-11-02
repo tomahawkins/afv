@@ -38,6 +38,7 @@ executable afv
     directory     >= 1.0     && < 1.1,
     process       >= 1.0     && < 1.1,
     language-c    >= 0.3.2   && < 0.4,
+    cil           >= 0.1.0   && < 0.2,
     yices         >= 0.0.0.7 && < 0.0.1
 
   ghc-options:  -W

@@ -1,7 +1,8 @@
 module Main (main) where
 
-import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString as B
 import Language.C
+import Language.CIL
 import System.Environment
 
 import Compile
@@ -19,15 +20,12 @@ main = do
     ["example"] -> example
     ["header"]  -> header
     ["verify", file] -> do
-      a <- if file == "-" then getContents else readFile file
-      model <- compile $ parse (if file == "-" then "stdin" else file) a
-      verify "yices" 20 model
+      a <- if file == "-" then B.getContents else B.readFile file
+      let cil = parseCIL (if file == "-" then "stdin" else file) a
+      print cil
+      --model <- compile $ parse (if file == "-" then "stdin" else file) a
+      --verify "yices" 20 model
     _ -> help
-
-parse :: String -> String -> CTranslUnit
-parse name code = case parseC (B.pack code) (initPos name) of
-    Left e  -> error $ "parsing error: " ++ show e
-    Right a -> a
 
 header :: IO ()
 header = do
