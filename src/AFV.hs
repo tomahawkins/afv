@@ -1,12 +1,12 @@
 module Main (main) where
 
 import qualified Data.ByteString as B
-import Language.C
+--import Language.C
 import Language.CIL
 import System.Environment
 
-import Compile
-import Verify
+--import Compile
+--import Verify
 
 version = "0.2.0"
 
